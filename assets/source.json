@@ -1,0 +1,31 @@
+{
+  "repository": "https://github.com/zhu1090093659/dsh-web",
+  "revision": "bd6c2bb67d9f88e1190c6884982c03c88205aa39",
+  "files": [
+    {
+      "path": "LICENSE",
+      "sha": "d645695673349e3947e8e5ae42332d0ac3164cd7",
+      "size": 11358
+    },
+    {
+      "path": "packages/dsh-pet/LICENSE",
+      "sha": "d645695673349e3947e8e5ae42332d0ac3164cd7",
+      "size": 11358
+    },
+    {
+      "path": "packages/dsh-pet/assets/whale-refined/pet.json",
+      "sha": "81de5d73ee3ca47e6389e97ad09b62aa45306265",
+      "size": 1851
+    },
+    {
+      "path": "packages/dsh-pet/assets/whale-refined/previews/idle.gif",
+      "sha": "4a74f6829697254207f98838d4ad9731a06d405c",
+      "size": 127385
+    },
+    {
+      "path": "packages/dsh-pet/assets/whale-refined/spritesheet.webp",
+      "sha": "d68c8f4f0905258a533a9ab895861d46454d9861",
+      "size": 2199642
+    }
+  ]
+}
