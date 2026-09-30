@@ -2,28 +2,64 @@
 
 使用 dsh-web“鲸鱼娘（精致版）”素材的原生 PyQt6 桌宠：透明背景、无边框、请求置顶、拖动、点击互动、右键切换动作、滚轮缩放、暂停动画，以及 agent 的 MCP 通知气泡。运行时完全离线，不需要浏览器或原项目服务。
 
-## 运行
+## 安装与运行
 
-当前工作区已安装依赖并下载鲸鱼娘（精致版）素材：
+环境要求：
 
-```bash
-.venv/bin/python pet.py
-```
-
-首次安装或迁移到其他机器：
+- Python 3.10 或更新（PyQt6 与 mcp 均要求 `>=3.10`；开发与验证使用 CPython 3.12 / 3.14）
+- 图形桌面会话：Windows、macOS，或 Linux 的 X11 / XWayland（见「Linux 桌面」）
+- 素材已随仓库提交在 `assets/`（约 2.3 MB），运行本身不需要联网
 
 ```bash
+git clone <本仓库地址> && cd desktop_companion
+
+# 1. 创建虚拟环境（uv 与标准库 venv 二选一）
 uv venv .venv
+python3 -m venv .venv          # 不用 uv 时
+
+# 2. 安装依赖
 uv pip install --python .venv/bin/python -r requirements.txt
-python3 scripts/fetch_assets.py
+.venv/bin/python -m pip install -r requirements.txt   # 不用 uv 时
+
+# 3. 素材缺失或校验失败时重新拉取（按 Git blob SHA-1 校验，可重复执行）
+.venv/bin/python scripts/fetch_assets.py
+
+# 4. 无桌面自检：9 条动画轨道、57 帧透明精灵、无边框窗口
+.venv/bin/python pet.py --check
+
+# 5. 运行
 .venv/bin/python pet.py
 ```
 
-也可以使用 `python3 -m venv .venv` 和 `.venv/bin/python -m pip install -r requirements.txt`。Windows 使用 `.venv\Scripts\python.exe`。
+Windows 把 `.venv/bin/python` 换成 `.venv\Scripts\python.exe`。
+
+两个依赖文件的区别：`requirements.txt` 只列直接依赖及其允许区间，适合日常安装和升级；`requirements.lock.txt` 是开发机（CPython 3.14 / Linux x86_64）的完整锁定版本（含传递依赖），用于逐位复现当前环境。在其他平台或其他 Python 版本上若某个包没有可用 wheel，请改用 `requirements.txt`，或在本机重新生成锁定文件：`python -m pip freeze > requirements.lock.txt`。
+
+### 系统依赖（Linux）
+
+PyQt6 的 wheel 自带 Qt 运行时，但 xcb（X11 / XWayland）平台插件仍依赖系统的 Xcb、OpenGL、fontconfig 等库。桌面环境内一般已经装齐，最常缺的是 `libxcb-cursor`：
+
+| 发行版 | 安装命令 |
+| --- | --- |
+| Debian / Ubuntu | `sudo apt install libxcb-cursor0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-randr0 libxcb-render-util0 libxcb-shape0 libxcb-util1 libxcb-xfixes0 libxcb-xkb1 libxkbcommon-x11-0 libx11-xcb1 libegl1 libgl1 libfontconfig1 libdbus-1-3` |
+| Fedora | `sudo dnf install xcb-util-cursor xcb-util-image xcb-util-keysyms xcb-util-renderutil xcb-util-wm libxkbcommon-x11 libX11-xcb mesa-libEGL mesa-libGL fontconfig dbus-libs` |
+
+缺库时以自检命令为准（有输出表示还缺这些库）：
 
 ```bash
-.venv/bin/python pet.py --size 240
-.venv/bin/python pet.py --check
+find .venv -name libqxcb.so -path "*platforms*" -exec ldd {} \; | grep "not found"
+```
+
+没有显示器的 CI 或 SSH 会话可以用 `QT_QPA_PLATFORM=offscreen` 运行 `--check` 和各检查脚本（`--check` 会自动使用该模式），但真正显示窗口仍需要一个桌面会话。
+
+### 运行参数
+
+```bash
+.venv/bin/python pet.py                                  # 默认尺寸 320
+.venv/bin/python pet.py --size 240                       # 窗口最长边像素数
+.venv/bin/python pet.py --check                          # 离屏自检，不打开桌面窗口
+.venv/bin/python pet.py --socket 名称                     # 指定本机通知 IPC 名称（默认按项目路径和用户生成）
+.venv/bin/python pet.py --history-db /path/to/messages.sqlite3   # 指定历史数据库路径
 ```
 
 左键拖动，单击播放互动动作，右键打开原生菜单，滚轮调整大小，通过菜单的“退出”退出。选择某个动作后会按原始清单循环或回到待机。当前没有实现上游的养成数值、语音、自动 AI 对话和自动行走；agent 可以主动通过 MCP 发送通知。
@@ -36,12 +72,6 @@ python3 scripts/fetch_assets.py
 
 所有成功接收的通知（包括排队中的消息）都会立即提交到 SQLite 数据库，默认路径为项目内的 `data/messages.sqlite3`。记录包含通知 ID、UTC 接收时间、标题、完整正文、显示时长及提示音设置；界面显示本地时间。退出或重启后历史仍保留，未显示完的通知不会自动弹出；从历史重新显示只生成气泡，不重复写入历史，也不播放提示音。队列已满或参数无效的请求不会存入历史；数据库写入失败时通知会返回错误。
 
-可以指定数据库位置：
-
-```bash
-.venv/bin/python pet.py --history-db /path/to/messages.sqlite3
-```
-
 数据库及其 WAL / SHM 辅助文件属于运行数据，默认 `data/` 已加入 `.gitignore`。数据库使用 Python 内置的 `sqlite3`，无需安装额外依赖。历史与菜单检查：`.venv/bin/python scripts/check_history.py`，使用临时数据库，不写入实际消息历史。
 
 右键“退出”会关闭宠物、气泡与历史窗口，停止动画计时器，关闭本机 IPC 连接及 SQLite 数据库，并结束 Qt 事件循环。已经返回成功的通知均已提交到数据库；退出时取消尚未开始的存储任务，等待当前存储操作结束后关闭连接，未确认的请求不会在退出期间弹出气泡。主宠物窗口显式启用 `WA_QuitOnClose`，避免 Qt 默认将 `Tool` 窗口排除在最后窗口退出判断之外。Codex 启动的 stdio MCP 是由 MCP 客户端管理的独立进程，生命周期跟随客户端连接；桌宠退出后，相关工具会返回离线错误。
@@ -52,21 +82,21 @@ python3 scripts/fetch_assets.py
 
 ## MCP：把桌宠当作 terminal bell
 
-桌宠默认接收本机通知。先安装更新后的依赖，再启动桌宠（已在运行的旧版本需要退出后重启）：
+桌宠默认接收本机通知。先启动桌宠，再配置 MCP 客户端（已在运行的旧版本需要退出后重启）：
 
 ```bash
-uv pip install --python .venv/bin/python -r requirements.txt
+.venv/bin/python -m pip install -r requirements.txt
 .venv/bin/python pet.py
 ```
 
-将下面配置合并到支持 stdio 的 MCP 客户端配置中，重新连接 MCP server。项目内也提供了 `mcp-config.example.json`。迁移项目时请修改这两个绝对路径；Windows 使用虚拟环境的 `Scripts/python.exe`。
+将下面配置合并到支持 stdio 的 MCP 客户端配置中，重新连接 MCP server。项目内也提供了 `mcp-config.example.json`。两处路径都要换成本机的绝对路径：`command` 指向虚拟环境里的 Python（Windows 为 `.venv\Scripts\python.exe`），`args` 指向本项目的 `mcp_server.py`。
 
 ```json
 {
   "mcpServers": {
     "desktop-pet": {
-      "command": "/var/home/phil/dev/desktop_companion/.venv/bin/python",
-      "args": ["/var/home/phil/dev/desktop_companion/mcp_server.py"]
+      "command": "/ABSOLUTE/PATH/TO/desktop_companion/.venv/bin/python",
+      "args": ["/ABSOLUTE/PATH/TO/desktop_companion/mcp_server.py"]
     }
   }
 }
@@ -127,7 +157,7 @@ agent 也可以先调用 `desktop_pet_list_actions`，再调用 `desktop_pet_pla
 .venv/bin/python scripts/check_notifications.py --preview /tmp/desktop-pet-preview.png
 ```
 
-原生 Wayland 通常不允许客户端定位独立窗口，因此气泡跟随和贴边定位应使用支持窗口定位的桌面后端；当前 GNOME 环境默认使用下节说明的 XWayland。
+原生 Wayland 通常不允许客户端定位独立窗口，因此气泡跟随和贴边定位应使用支持窗口定位的桌面后端；GNOME 下默认使用下节说明的 XWayland。
 
 ## Linux 桌面
 
@@ -139,7 +169,7 @@ GNOME + Wayland 且存在 DISPLAY 时，默认使用 XWayland（Qt xcb），让 
 QT_QPA_PLATFORM=xcb .venv/bin/python pet.py
 ```
 
-此模式需要系统安装 XWayland 和 Qt xcb 所需的系统库。当前 Fedora 43 环境缺少 `libxcb-cursor.so.0`，已将官方 `xcb-util-cursor-0.1.5-4.fc43.x86_64.rpm` 解包至 `.native/`，用系统 Fedora 43 公钥在项目私有 RPM 数据库中验证签名后使用。程序仅在 xcb 模式预加载此本地库，没有修改系统安装。新机器应通过自身包管理器安装 `xcb-util-cursor`（Fedora）或 `libxcb-cursor0`（Debian/Ubuntu）。
+此模式需要系统安装 XWayland 以及 Qt xcb 平台插件的运行库（见「系统依赖（Linux）」）。若发行版没有提供 `libxcb-cursor.so.0`，可以把该库文件放到项目根的 `.native/usr/lib64/`：程序只在 xcb 模式下预加载它，不修改系统安装，`.native/` 已列入 `.gitignore`。这只是兵底方案，优先用包管理器安装。
 
 真实桌面回归检查：`.venv/bin/python scripts/check_window_behavior.py`，会短暂打开测试窗口，验证普通窗口反复激活时的层级、不接收焦点属性、原始右键菜单与 Esc 关闭行为。
 
@@ -174,8 +204,47 @@ SQLite 连接在存储线程中创建、使用和关闭；运行中的查询、�
 
 ## 素材来源与许可
 
-来源：[zhu1090093659/dsh-web 的 whale-refined 目录](https://github.com/zhu1090093659/dsh-web/tree/bd6c2bb67d9f88e1190c6884982c03c88205aa39/packages/dsh-pet/assets/whale-refined)。固定版本：`bd6c2bb67d9f88e1190c6884982c03c88205aa39`。
+### 来源
 
-`assets/` 仅保存鲸鱼娘（精致版）的 `pet.json`、精灵图和预览，以及上游许可证，共约 2.3 MB。`assets/source.json` 记录 5 个上游文件的路径、大小和 Git blob SHA-1。下载脚本只抓取这一种宠物，校验哈希、跳过完整文件，失败后可以重跑。
+本项目没有自绘美术，唯一的美术素材是 dsh-web 的「鲸鱼娘（精致版）」桌宠图集：
 
-鲸鱼娘（精致版）的 `pet.json` 将素材标注为 MIT，未标注作者。项目同时保留了原始清单和 `assets/UPSTREAM-LICENSE`、`assets/DSH-PET-LICENSE`。
+- 上游仓库：[zhu1090093659/dsh-web](https://github.com/zhu1090093659/dsh-web)（`packages/dsh-pet`，npm 包名 `@linxin666/dsh-pet`）
+- 上游目录：[packages/dsh-pet/assets/whale-refined](https://github.com/zhu1090093659/dsh-web/tree/bd6c2bb67d9f88e1190c6884982c03c88205aa39/packages/dsh-pet/assets/whale-refined)
+- 固定版本：`bd6c2bb67d9f88e1190c6884982c03c88205aa39`（下载、哈希校验和归因都锁定该 commit，不跟随 `main`）
+
+`assets/` 只保存这一种宠物的 `pet.json`、精灵图和预览，加上两份上游许可证，共约 2.3 MB。精灵图为 1536×1872 的 8 列 × 9 行图集（单元格 192×208，使用 alpha），行序沿用上游 `sprite2d` 契约：idle / running-right / running-left / waving / jumping / failed / waiting / running / review。
+
+上游记录的衍生关系（摘自 `packages/dsh-pet/README.zh.md` 的内置宠物表与来源说明）：
+
+| 层级 | 内容 |
+|---|---|
+| 鲸鱼娘（原版）`whale` | dsh-web 仓库原有的鲸鱼娘图集，其 `pet.json` 标注 `license: BSD-3-Clause` |
+| 鲸鱼娘（精致版）`whale-refined` | **本项目所用素材**：以上述设计方向为基础，经 AI 辅助二次创作、修复与细节精修的衍生版本，`pet.json` 标注 `license: MIT` |
+| 更早的灵感来源 | 上游说明精致版参考了 DreamSkin 的「DeepSeek-鲸鱼娘」主题（[dreamskin.cc](https://dreamskin.cc)，历史来源记录标注作者 `powerdog996`、主题 MIT，见 [dsh-web commit `87edd7f`](https://github.com/zhu1090093659/dsh-web/commit/87edd7ff4800dffd40bc93fb76e4ae450390facd)）。该记录只用于说明来源与衍生关系，精致版并非原作者的官方作品 |
+
+### 许可声明现状（上游不一致，本项目按最严格口径处理）
+
+上游对这批素材的授权声明并不统一：
+
+| 位置 | 声明 |
+|---|---|
+| dsh-web 根 `LICENSE`、`packages/dsh-pet/LICENSE` | Apache License 2.0。两份内容完全相同，是未填写版权人的 Apache-2.0 原文，在本仓库分别保存为 `assets/UPSTREAM-LICENSE` 与 `assets/DSH-PET-LICENSE` |
+| `packages/dsh-pet/package.json` | `"license": "Apache-2.0"` |
+| `assets/whale-refined/pet.json` | `"license": "MIT"`，且**没有 `author` 字段**（上游其他宠物通常会声明作者，例如 `ouo-neko` → `Pessimist0906`、`jyn` → `11726`） |
+| 上游 `packages/dsh-pet/THIRD_PARTY_NOTICES.md` | 逐项声明了喷水鲸鱼装饰（派生自 DeepSeek wordmark，MIT © 2026 DeepSeek）、`ouo-neko`（MIT © Pessimist0906）、Miku（MIT © stushansusu，另受 Piapro 角色许可约束）等，但**未包含 `whale-refined`** |
+
+结论：精致版素材同时被上游标为 Apache-2.0（仓库 / 包级）与 MIT（清单级），且缺少可署名的版权人。在作者本人澄清之前，本项目按约束更强的 **Apache-2.0** 对待这批素材：保留两份许可证原文、保留 `pet.json` 原样（不修改、不覆盖其 `license` 字段）、保留 `assets/source.json` 的来源与哈希记录，并在再分发时一并附上本节链接。Apache-2.0 相比 MIT 额外要求保留专利条款并标注修改，因此再分发或做衍生时请连同本文件与整个 `assets/` 一起附带，不要只取走 `spritesheet.webp`。
+
+本项目自身的代码（`*.py`、`scripts/`、`docs/`）与素材许可相互独立；仓库当前没有声明自身许可证，若计划开源请自行选择并补充根 `LICENSE`，同时不要把素材的 Apache-2.0 约束误当作代码的许可结论。
+
+补充提醒：上游 `packages/dsh-pet/assets/` 下还有其它宠物，其中星夜人偶（Starry Doll）为 CC-BY-NC-SA-4.0、Miku 受 Piapro 角色许可约束。本项目未使用这些素材；若以后扩展宠物，需要逐个核对清单与 `THIRD_PARTY_NOTICES.md`，不能沿用本节的结论。
+
+### 复现与校验
+
+```bash
+python3 scripts/fetch_assets.py
+```
+
+脚本通过 GitHub API 读取固定 revision 的 tree，只抓取 `whale-refined` 目录与两份 `LICENSE`，按 Git blob SHA-1 校验后写入 `assets/`。`assets/source.json` 记录 5 个上游文件的路径、大小和 blob SHA-1；已完整的文件会被跳过，失败后可以直接重跑。更换素材版本时，需要同步更新 `scripts/fetch_assets.py` 里的 `REVISION`、`assets/source.json` 和本节的固定版本号。
+
+若要把上游的第三方声明一并归档，可在 `fetch_assets.py` 的白名单中加入 `packages/dsh-pet/THIRD_PARTY_NOTICES.md`（当前未抓取）。

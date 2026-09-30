@@ -1,8 +1,8 @@
 {
   "mcpServers": {
     "desktop-pet": {
-      "command": "/var/home/phil/dev/desktop_companion/.venv/bin/python",
-      "args": ["/var/home/phil/dev/desktop_companion/mcp_server.py"]
+      "command": "/ABSOLUTE/PATH/TO/desktop_companion/.venv/bin/python",
+      "args": ["/ABSOLUTE/PATH/TO/desktop_companion/mcp_server.py"]
     }
   }
 }

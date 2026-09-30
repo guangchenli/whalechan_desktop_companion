@@ -1,3 +1,12 @@
+# 直接依赖。安装：python -m pip install -r requirements.txt
+# 需要 Python 3.10 或更新（PyQt6 与 mcp 均要求 >=3.10）；开发与验证使用 CPython 3.14。
+# 需要与开发机完全一致的版本时，改用 requirements.lock.txt。
+
+# 桌宠窗口、精灵动画、通知气泡。会一并安装平台相关的 PyQt6-Qt6 运行时与 PyQt6-sip。
 PyQt6>=6.7,<7
+
+# MCP stdio server（mcp_server.py），官方 Python SDK。
 mcp>=1.28,<2
+
+# contracts.py 等模块使用的类型标注 backport。
 typing_extensions>=4.12,<5
