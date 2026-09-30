@@ -150,6 +150,8 @@ agent 也可以先调用 `desktop_pet_list_actions`，再调用 `desktop_pet_pla
 
 实例使用 `QLockFile` 持有与用户及 IPC 名称对应的进程间锁，锁文件放在系统临时目录。探测、清理残留 socket 和监听均在持锁期间进行；连接超时或权限错误不会触发端点删除。启动时也会检测尚未使用实例锁的旧版本桌宠。
 
+桌宠监听成功后，会在系统临时目录的 `desktop-pet-discovery-<用户名哈希>/` 下原子写入一份端点发现记录，每个实例单独一个 JSON 文件，内容包含 Qt 的实际 socket 路径（Windows 为命名管道地址）和启动时间。目录和文件在 Unix 下仅当前用户可读写；正常退出只删除本实例的记录。客户端会先查询状态，忽略崩溃留下的离线记录。发现目录使用 Python `tempfile.gettempdir()` / Node `os.tmpdir()` 的临时目录设置；桌宠和客户端应使用相同的临时目录环境。
+
 完整链路检查（不打开桌面窗口，包含真实 MCP 客户端握手、动作查询与播放、中文通知、排队角标、手动关闭、参数校验与 IPC 错误）：
 
 ```bash
@@ -158,6 +160,61 @@ agent 也可以先调用 `desktop_pet_list_actions`，再调用 `desktop_pet_pla
 ```
 
 原生 Wayland 通常不允许客户端定位独立窗口，因此气泡跟随和贴边定位应使用支持窗口定位的桌面后端；GNOME 下默认使用下节说明的 XWayland。
+
+### Pi：每轮对话结束自动 bell
+
+`integrations/pi/desktop-pet-bell.ts` 是一个 Pi 扩展：在 Pi 完全停歇、等待输入时（`agent_settled` 事件）自动发一条气泡。事件驱动，不依赖模型自觉调用工具；中断（`⏹ Pi 已停止`）和出错（`⚠️ Pi 运行出错`）用不同文案，默认通知完成和错误，取消默认不通知。
+
+气泡正文默认是**模型写的一两句总结**，而不是固定文案。扩展保存 `agent_before_settle` 给出的上下文快照 `context.llmMessages`，连同当轮模型、思考级别与 session id，在末尾追加一条「请用一两句总结你刚才的回复」的请求，再调用一次 `modelRegistry.complete()`。快照自带 leading system message 时直接沿用；否则补上当轮的 system prompt 和工具声明。这样尽量复用缓存前缀，实际命中仍取决于 provider 的渲染、历史思考保留策略和服务端缓存状态。返回的总结只用来填气泡，不写回会话、不进 transcript、下一轮看不到。
+
+Pi 扩展的事件回调无法调用 MCP 工具（MCP 工具只对模型 / codemode 开放），因此 bell 直接写桌宠的 Qt local socket，与 `mcp_server.py` 使用同一端点、同一套参数校验，不会额外启动宠物。
+
+```bash
+# 安装（软链，改完源码后 /reload 或重启 pi 生效）
+ln -sfn "$PWD/integrations/pi/desktop-pet-bell.ts" ~/.pi/agent/extensions/desktop-pet-bell.ts
+```
+
+端点按以下顺序解析：`DESKTOP_PET_SOCKET`（名称或绝对路径）→ 配置里的 `socket` → `DESKTOP_PET_DIR` 或配置的 `projectDir` → 系统临时目录中的端点发现记录（选择最近启动且在线的实例）→ 从 `~/.pi/agent/mcp.json`、`<cwd>/.pi/mcp.json` 中找到启动 `mcp_server.py` 的那个 server 并取其所在目录 → 当前目录存在 `pet_ipc.py` 时用当前目录 → 从扩展文件的真实位置找到所属仓库（支持上述软链接安装）。因此软链接安装和直接复制扩展都可以自动发现桌宠，不依赖 Pi 的启动目录。发现记录也支持桌宠通过 `--socket` 指定的自定义端点；若同时运行多只桌宠，指定 `socket` 可固定目标实例。目录推导仍按 `pet_ipc.default_server_name()` 的真实路径 + 当前用户名换算哈希，无需手填哈希。
+
+首次启用临时目录发现时，需重启桌宠以生成记录，并在 Pi 中 `/reload`；复制安装的扩展还需重新复制更新后的文件。扩展不会自行启动桌宠。
+
+可选配置文件 `~/.pi/agent/desktop-pet.json`（项目内 `.pi/desktop-pet.json` 优先）：
+
+```json
+{
+  "projectDir": "/ABSOLUTE/PATH/TO/desktop_companion",
+  "event": "agent_settled",
+  "title": "Pi",
+  "sound": false,
+  "ringOnError": true,
+  "ringOnAbort": false,
+  "debounceMs": 1500,
+  "warn": true,
+  "summary": {
+    "enabled": true,
+    "maxChars": 90,
+    "maxTokens": 512,
+    "temperature": 0.2,
+    "timeoutMs": 15000,
+    "minInputChars": 60,
+    "noThinking": false
+  }
+}
+```
+
+`event` 可设为 `turn_end`（每个回合触发，包括工具循环之间的回合；不再额外响应 `agent_settled`）或 `off`；`title` 默认取 Pi 的会话名；`debounceMs` 抑制短时间内的重复通知；`warn` 在桌宠未运行等失败时于 Pi 内提示一次，之后保持安静。`ringOnError: false` 只关闭错误通知，正常完成仍会通知。总结相关：`minInputChars` 以下的短回复直接用固定文案（不花 token），`maxChars` 限制气泡长度，`timeoutMs` 之后放弃总结退回固定文案，`prompt` 可覆盖注入的指令。总结请求不计入 Pi 会话内的 token / 费用统计，也不会出现在 transcript 里，但仍消耗模型 token，远端 provider 仍可能收费。
+
+在思考模型上，思考 token 和正文共用 `maxTokens`：总结那一次如果思考过长就会吃满预算、返回空正文，于是退回固定文案。默认沿用会话的思考级别（会话关闭思考时也保持关闭），通过摘要指令请求简短输出，默认 `maxTokens` 为 512；可以用配置覆盖。这个上限控制生成预算，不改变输入消息。
+
+`noThinking: true` 会停止沿用会话的思考级别，并在 OpenAI 兼容请求中合并 `reasoning_effort: "none"`。`samplingParams` 的其他字段会保留，若同时指定 `reasoning_effort`，则 `noThinking` 优先。关闭思考可能改变 chat template 的 system 指令和生成后缀，降低缓存复用率，所以默认关闭此选项。当前 `gufo` 支持多个缓存检查点，但改变 system 前缀仍可能导致缓存失效；它不保证执行 reasoning-token budget。`samplingParams` 仅对 OpenAI 兼容适配器生效，具体参数支持取决于 provider。
+
+用户主动取消不会发错误气泡：`outcome` 为 `aborted`、abort signal 已触发、或最后一条回复的 `stopReason` 为 `aborted` 时，都按取消处理（取消时被掩断的流和退出中的进程常常上报成 `error`）。想连取消一起通知就设 `"ringOnAbort": true`。
+
+会话内可用 `/pet-bell on|off|status` 开关与查看解析到的端点（status 会显示上次总结的 `cache 读 / 写 / 新 / 出` token），`/pet-bell plain` 临时切换固定文案，`/pet-bell 文本` 发送一条测试气泡；启动时用 `pi --no-pet-bell` 关闭 bell、`pi --pet-bell-plain` 只要固定文案不要总结。TUI 下总结在后台跑，不阻塞输入；关闭 bell、切换摘要模式、开始新一轮对话、切换会话或退出时，会取消待发摘要并丢弃迟到的结果。新通知也会取代尚未完成的旧通知。`pi -p` 一次性调用会等总结完成或超时后再退出。设 `DESKTOP_PET_BELL_DEBUG=/path/to/log` 可把每次总结的 cache 命中与发送文本追加到日志，用于确认 KV 复用。
+
+安装 Pi 后可运行 `node scripts/check_pi_bell.mjs` 做回归检查。检查使用 mock 模型和 IPC，并在 Pi 原生 Qwen 适配器发送请求前检查参数，不访问模型服务，也不向真实桌宠发通知。
+
+`.venv/bin/python scripts/check_ipc_discovery.py` 检查发现记录的发布、权限、实例冲突、重启和退出清理，并让 Node 扩展通过真实 Qt socket 发送通知；所有端点和记录都隔离在测试实例中，不通知真实桌宠。
 
 ## Linux 桌面
 

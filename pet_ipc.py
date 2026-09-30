@@ -2,6 +2,7 @@
 import getpass
 import hashlib
 import json
+import logging
 import os
 from pathlib import Path
 import time
@@ -14,6 +15,12 @@ from PyQt6.QtCore import QObject, QLockFile, QTimer
 from PyQt6.QtNetwork import QAbstractSocket, QLocalServer, QLocalSocket
 
 MAX_PACKET = 16384
+
+
+def discovery_directory():
+    """Shared with standalone clients; independent of the checkout's location."""
+    user = hashlib.sha256(getpass.getuser().encode()).hexdigest()[:20]
+    return Path(tempfile.gettempdir()) / f"desktop-pet-discovery-{user}"
 
 
 def default_server_name():
@@ -76,7 +83,41 @@ class PetIPCServer(QObject):
         self.lock = QLockFile(str(lock_root / f"desktop-pet-{suffix}.lock"))
         self.lock.setStaleLockTime(0)
         self._connections = set()
+        self._discovery_file = None
         self.closed = False
+
+    def _publish_endpoint(self):
+        """Publish only after listening; one atomic record per independently locked endpoint."""
+        temporary = None
+        try:
+            directory = discovery_directory()
+            directory.mkdir(mode=0o700, exist_ok=True)
+            if directory.is_symlink() or not directory.is_dir():
+                raise OSError("桌宠发现目录必须是普通目录")
+            if os.name == "posix":
+                if directory.stat().st_uid != os.getuid():
+                    raise OSError("桌宠发现目录属于其他用户")
+                directory.chmod(0o700)
+            suffix = hashlib.sha256(self.name.encode()).hexdigest()[:20]
+            target = directory / f"{suffix}.json"
+            record = dict(version=1, endpoint=self.server.fullServerName(),
+                          projectDir=str(Path(__file__).resolve().parent),
+                          pid=os.getpid(), startedAt=time.time_ns() // 1_000_000)
+            with tempfile.NamedTemporaryFile(mode="w", encoding="utf8", dir=directory,
+                                             prefix=".endpoint-", delete=False) as stream:
+                temporary = Path(stream.name)
+                json.dump(record, stream, ensure_ascii=False)
+            os.replace(temporary, target)
+            self._discovery_file = target
+        except OSError as exc:
+            # Explicit socket clients must remain usable if discovery cannot be published.
+            logging.getLogger(__name__).warning("无法发布桌宠 IPC 发现记录：%s", exc)
+        finally:
+            if temporary is not None:
+                try:
+                    temporary.unlink(missing_ok=True)
+                except OSError:
+                    pass
 
     def start(self):
         if not self.lock.tryLock(0):
@@ -97,15 +138,17 @@ class PetIPCServer(QObject):
                              QLocalSocket.LocalSocketError.ServerNotFoundError)
             if error not in absent_errors:
                 raise RuntimeError("无法确认 IPC 端点是否已失效；请检查访问权限或连接状态")
-            if self.server.listen(self.name):
-                return
-            if (self.server.serverError() == QAbstractSocket.SocketError.AddressInUseError
-                    and error == QLocalSocket.LocalSocketError.ConnectionRefusedError):
-                QLocalServer.removeServer(self.name)
-                if self.server.listen(self.name):
-                    return
-            raise RuntimeError(f"无法启动桌宠通知服务：{self.server.errorString()}")
+            if not self.server.listen(self.name):
+                if (self.server.serverError() == QAbstractSocket.SocketError.AddressInUseError
+                        and error == QLocalSocket.LocalSocketError.ConnectionRefusedError):
+                    QLocalServer.removeServer(self.name)
+                    if not self.server.listen(self.name):
+                        raise RuntimeError(f"无法启动桌宠通知服务：{self.server.errorString()}")
+                else:
+                    raise RuntimeError(f"无法启动桌宠通知服务：{self.server.errorString()}")
+            self._publish_endpoint()
         except Exception:
+            self.server.close()
             self.lock.unlock()
             raise
 
@@ -117,6 +160,11 @@ class PetIPCServer(QObject):
         for socket in tuple(self._connections):
             if not sip.isdeleted(socket):
                 socket.abort()
+        if self._discovery_file is not None:
+            try:
+                self._discovery_file.unlink(missing_ok=True)
+            except OSError as exc:
+                logging.getLogger(__name__).warning("无法清理桌宠 IPC 发现记录：%s", exc)
         self.lock.unlock()
 
     def accept_connections(self):
