@@ -35,6 +35,7 @@ async def desktop_pet_bell(
     title: Short sender or task label, 1–60 characters on one line.
     duration_seconds: Legacy compatibility field, 3–120 seconds; does not dismiss the bubble.
     The bubble stays visible until the user closes it. A red badge counts waiting messages.
+    The notification animation repeats while messages remain open.
     sound: Also request the system bell (desktop settings may silence it).
     Returns displayed/queued and a notification id, confirming acceptance, not that it was read.
     Messages queue in arrival order; a full queue returns an error. Does not take keyboard focus.
@@ -67,10 +68,10 @@ async def desktop_pet_play_action(
     """Immediately play a specific animation on the desktop pet, resuming paused animation.
 
     action: An exact name returned by desktop_pet_list_actions, e.g. waving, jumping, running, idle.
-    once: True by default; play one complete cycle then return to idle. False follows the track's
-    original loop/fallback behavior, so non-looping tracks still end. Use idle with once false
-    to return to normal idle animation. Replaces the current action without queuing or moving
-    the window. Returns acceptance immediately; unknown actions return an error without changes.
+    once: Legacy flag, True by default. Actions play one cycle, then return to random idle
+    playback, or to repeating notification animation while messages remain open. Use idle
+    to play the base idle action. Replaces the current action without queuing or moving the
+    window. Returns acceptance immediately; unknown actions return an error without changes.
     """
     options = validate_action(action, once)
     return await asyncio.to_thread(send_request, dict(command="play_action", **options))

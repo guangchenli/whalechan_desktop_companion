@@ -25,7 +25,7 @@ LABELS.update({"shy": "害羞", "shy2": "害羞 2", "shy3": "害羞 3", "work": 
 class Track:
     frames: list
     durations: list[int]
-    loop: bool = True
+    loop: bool = False
     fallback: str = "idle"
 
 
@@ -57,6 +57,10 @@ class Pet:
             self.name = self.data["displayName"]
             if not isinstance(self.name, str) or not self.name.strip():
                 raise ValueError("displayName 必须是非空文本")
+            labels = self.data.get("labels", {})
+            if not isinstance(labels, dict) or any(not isinstance(v, str) or not v.strip() for v in labels.values()):
+                raise ValueError("labels 必须是动作名称到非空文本的映射")
+            self.labels = LABELS | labels
             renderer = self.data["renderer"]
             if renderer == "sprite2d":
                 self._load_sprite(self.data[renderer])
@@ -65,6 +69,12 @@ class Pet:
             else:
                 raise ValueError(f"不支持的 renderer：{renderer!r}")
             self._validate_tracks()
+            self.idle_group = self.data.get("idleGroup", [name for name in self.tracks
+                                                        if name not in ("failed", "running", "notification", "goodbye")])
+            if (not isinstance(self.idle_group, list)
+                    or any(not isinstance(name, str) or name not in self.tracks for name in self.idle_group)
+                    or len(set(self.idle_group)) != len(self.idle_group)):
+                raise ValueError("idleGroup 必须是不重复的已有动作名称列表")
             if self.sheet is None:
                 # Decode every file now: no missing image should first fail in paintEvent.
                 for name, track in self.tracks.items():
@@ -76,26 +86,32 @@ class Pet:
             raise AssetLoadError(f"素材加载失败 {manifest}：{exc}") from exc
 
     def _load_sprite(self, block):
-        # The upstream sprite2d format uses this fixed nine-row action layout.
+        # Older upstream manifests use the fixed nine-row layout; prepared atlases
+        # can declare their own row order, including the notification action.
+        actions = block.get("actions", ROWS)
+        if (not isinstance(actions, list) or not actions
+                or any(not isinstance(name, str) or not name.strip() for name in actions)
+                or len(set(actions)) != len(actions)):
+            raise ValueError("sprite2d.actions 必须是非空且不重复的动作名称列表")
         cell = block.get("cell", {"width": 192, "height": 208})
         self.width = positive_int(cell["width"], "sprite2d.cell.width")
         self.height = positive_int(cell["height"], "sprite2d.cell.height")
         columns = positive_int(block.get("columns", 8), "sprite2d.columns")
         atlas_rows = positive_int(block.get("atlasRows", 9), "sprite2d.atlasRows")
-        if atlas_rows < len(ROWS):
-            raise ValueError("sprite2d.atlasRows 不足以容纳九行动作")
+        if atlas_rows < len(actions):
+            raise ValueError("sprite2d.atlasRows 不足以容纳动作")
         self.sheet = QPixmap(str(self.path / block["spritesheetPath"]))
         if self.sheet.isNull() or (self.sheet.width(), self.sheet.height()) != (self.width * columns, self.height * atlas_rows):
             raise ValueError("sprite2d.spritesheetPath 精灵图缺失或尺寸错误")
         counts = block.get("frames", COUNTS)
-        if not isinstance(counts, list) or len(counts) != len(ROWS):
-            raise ValueError("sprite2d.frames 必须包含九行动作的帧数")
-        for row, name in enumerate(ROWS):
+        if not isinstance(counts, list) or len(counts) != len(actions):
+            raise ValueError("sprite2d.frames 必须包含每行动作的帧数")
+        for row, name in enumerate(actions):
             count = positive_int(counts[row], f"sprite2d.frames[{row}]")
             if count > columns:
                 raise ValueError(f"sprite2d.frames[{row}] 超出精灵图列数")
             config = block.get("tracks", {}).get(name, {})
-            durations = config.get("durations", DEFAULT_MS[row])
+            durations = config.get("durations", DEFAULT_MS[ROWS.index(name)] if name in ROWS else [200])
             if not isinstance(durations, list) or not durations:
                 raise ValueError(f"sprite2d.tracks.{name}.durations 必须是非空列表")
             for ms in durations:
@@ -103,7 +119,7 @@ class Pet:
             self.tracks[name] = Track(
                 [(column * self.width, row * self.height, self.width, self.height) for column in range(count)],
                 [durations[i % len(durations)] for i in range(count)],
-                config.get("loop", name not in ("jumping", "failed")), config.get("fallback", self.idle))
+                config.get("loop", False), config.get("fallback", self.idle))
 
     def _load_frames(self, block):
         self.idle = block["phases"]["idle"]
@@ -134,7 +150,7 @@ class Pet:
                 if frame_ms is not None:
                     ms = frame_ms[i] if i < len(frame_ms) else default_ms
                 durations.append(ms)
-            self.tracks[name] = Track(frames, durations, config.get("loop", True), config.get("fallback", self.idle))
+            self.tracks[name] = Track(frames, durations, config.get("loop", False), config.get("fallback", self.idle))
 
     def _validate_tracks(self):
         if not isinstance(self.idle, str) or self.idle not in self.tracks:

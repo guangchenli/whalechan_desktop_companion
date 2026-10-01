@@ -30,8 +30,10 @@ parser.add_argument("--preview", type=Path, help="保存气泡与桌宠的界面
 args = parser.parse_args()
 app = QApplication([])
 pet = create_pet(MANIFEST, 240, history_db=":memory:")
+pet.animation.set_idle_group(["idle"])
 pet.move(400, 360)
 pet.show()
+pet.animation.toggle_pause(True)
 server_name = "desktop-pet-check-" + uuid.uuid4().hex
 start_notifications(pet, server_name)
 pool = ThreadPoolExecutor(max_workers=1)
@@ -66,6 +68,8 @@ async def check_mcp():
             })
             assert not first.isError, first
             assert first.structuredContent["status"] == "displayed"
+            status = (await session.call_tool("desktop_pet_status", {})).structuredContent
+            assert status["current_action"] == "notification" and not status["paused"]
             second = await session.call_tool("desktop_pet_bell", {
                 "message": "第二条通知：中文长消息也能滚动阅读。\n" * 50,
                 "duration_seconds": 120,
@@ -94,9 +98,11 @@ async def check_actions():
             data = catalog.structuredContent
             assert data["paused"] is True and data["current_action"] == "idle"
             actions = {a["action"]: a for a in data["actions"]}
-            assert len(actions) == 9 and actions["waving"]["label"] == "招手"
-            assert actions["waving"]["loop"] is True
-            assert actions["jumping"]["loop"] is False
+            assert len(actions) == 12 and actions["waving"]["label"] == "招手"
+            assert actions["notification"]["label"] == "新消息提醒" and not actions["notification"]["loop"]
+            assert actions["waiting"]["label"] == "开心" and actions["running"]["label"] == "困倦"
+            assert not any(action["loop"] for action in actions.values())
+            assert actions["head-scratch"]["label"] == "扣扣脑袋"
             assert actions["waving"]["duration_seconds"] == 1.8
             for invalid in ({"action": "missing"}, {"action": " "}, {"action": "x" * 65}):
                 result = await session.call_tool("desktop_pet_play_action", invalid)
@@ -111,16 +117,20 @@ async def check_actions():
             status = (await session.call_tool("desktop_pet_status", {})).structuredContent
             assert status["current_action"] == "waving" and not status["paused"]
             await asyncio.sleep(actions["waving"]["duration_seconds"] + 0.4)
-            assert (await session.call_tool("desktop_pet_status", {})).structuredContent["current_action"] == "idle"
+            assert (await session.call_tool("desktop_pet_status", {})).structuredContent["current_action"] == "notification"
 
             running = await session.call_tool("desktop_pet_play_action", {"action": "running", "once": False})
-            assert not running.isError and running.structuredContent["looping"] is True
+            assert not running.isError and not running.structuredContent["looping"]
             await asyncio.sleep(actions["running"]["duration_seconds"] + 0.4)
-            assert (await session.call_tool("desktop_pet_status", {})).structuredContent["current_action"] == "running"
+            assert (await session.call_tool("desktop_pet_status", {})).structuredContent["current_action"] == "notification"
             jumping = await session.call_tool("desktop_pet_play_action", {"action": "jumping", "once": False})
             assert not jumping.isError and not jumping.structuredContent["looping"]
             await asyncio.sleep(actions["jumping"]["duration_seconds"] + 0.4)
-            assert (await session.call_tool("desktop_pet_status", {})).structuredContent["current_action"] == "idle"
+            assert (await session.call_tool("desktop_pet_status", {})).structuredContent["current_action"] == "notification"
+            notification = await session.call_tool("desktop_pet_play_action", {"action": "notification", "once": False})
+            assert not notification.isError and notification.structuredContent["looping"]
+            await asyncio.sleep(actions["notification"]["duration_seconds"] + 0.4)
+            assert (await session.call_tool("desktop_pet_status", {})).structuredContent["current_action"] == "notification"
             idle = await session.call_tool("desktop_pet_play_action", {"action": "idle", "once": False})
             assert not idle.isError and idle.structuredContent["action"] == "idle"
 
@@ -153,13 +163,14 @@ try:
     assert {row["notification_id"] for row in wait_future(pet.history.recent())} == {first["id"], second["id"]}
     print("PASS: real MCP initialization, tool schemas, Chinese delivery, FIFO queue and validation errors")
 
+    pet.animation.play("idle")
     pet.animation.toggle_pause(True)
     original_position = pet.pos()
     wait(pool.submit(asyncio.run, check_actions()))
     assert pet.animation.timer.isActive() and not pet.animation.paused
     assert pet.pos() == original_position
     assert pet.notification_controller.current.id == first["id"] and len(pet.notification_controller.queue) == 1
-    print("PASS: MCP action catalog, invalid-action safety, resume, one-shot return, looping and track fallback")
+    print("PASS: MCP action catalog, invalid-action safety, single-cycle actions and return to unread-message reminders")
 
     if args.preview:
         original_text = pet.bubble.body.toPlainText()
@@ -186,7 +197,11 @@ try:
     assert app.primaryScreen().availableGeometry().contains(pet.bubble.geometry())
 
     bubble = pet.bubble
+    # A queued message updates the badge without restarting the current animation.
+    pet.animation.set_notification_active(True)
+    pet.animation.advance()
     third = wait_future(pet.notification_controller.notify('最后一条通知', duration_seconds=3))
+    assert pet.animation.track_name == "notification" and pet.animation.frame == 1
     assert third["status"] == "queued" and third["queued"] == 2
     assert bubble.queue_badge.isVisible() and bubble.queue_badge.text() == "2"
     assert pet.notification_controller.current.id == first["id"]
@@ -197,7 +212,9 @@ try:
     assert bubble.isVisible() and bubble.body.toPlainText() == original_text
     assert pet.notification_controller.current.id == first["id"] and len(pet.notification_controller.queue) == 2
     assert bubble.queue_badge.text() == "2"
+    pet.animation.toggle_pause(True)
     QTest.mouseClick(bubble.close_button, Qt.MouseButton.LeftButton)
+    assert pet.animation.track_name == "notification" and not pet.animation.paused
     assert pet.notification_controller.current.id == second["id"]
     assert len(pet.notification_controller.queue) == 1
     assert bubble.isVisible() and bubble.queue_badge.isVisible() and bubble.queue_badge.text() == "1"
@@ -206,13 +223,16 @@ try:
     next(action for action in menu.actions() if action.text() == "收起通知 / 下一条").trigger()
     menu.deleteLater()
     assert pet.notification_controller.current.id == third["id"] and not pet.notification_controller.queue
+    assert pet.animation.track_name == "notification"
     assert bubble.body.toPlainText() == "最后一条通知" and bubble.queue_badge.isHidden()
     app.sendEvent(bubble, QEvent(QEvent.Type.Enter))
     app.sendEvent(bubble, QEvent(QEvent.Type.Leave))
     QTest.qWait(3200)
     assert bubble.isVisible() and pet.notification_controller.current.id == third["id"]
+    assert pet.animation.track_name == "notification"
     bubble.close()
     assert not bubble.isVisible() and pet.notification_controller.current is None
+    assert pet.animation.track_name == "idle" and pet.animation.mode == "idle"
     bubble.dismiss()
     assert pet.notification_controller.current is None
     print("PASS: persistent bubble beyond legacy duration, hover/leave, red queue badge, manual FIFO close, screen edges and long-text scrolling")
@@ -242,9 +262,9 @@ try:
     except RuntimeError as exc:
         assert "已经运行" in str(exc)
     finally:
-        duplicate.close()
+        duplicate.shutdown()
     assert wait(pool.submit(send_request, {"command": "status"}, server_name))["running"]
-    pet.close()
+    pet.shutdown()
     try:
         wait(pool.submit(send_request, {"command": "status"}, server_name))
         raise AssertionError("Closed pet must not accept requests")
@@ -252,5 +272,5 @@ try:
         pass
     print("PASS: malformed/oversized IPC, full queue, duplicate-instance guard, shutdown and offline errors")
 finally:
-    pet.close()
+    pet.shutdown()
     pool.shutdown(wait=True)

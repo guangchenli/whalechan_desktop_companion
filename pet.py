@@ -1,4 +1,4 @@
-"""Native PyQt6 desktop companion using the original dsh-web assets."""
+"""Native PyQt6 desktop companion using the redrawn whalechan assets."""
 import argparse
 import ctypes
 import os
@@ -9,20 +9,26 @@ import sys
 
 from PyQt6.QtCore import QPoint, QRectF, Qt, QTimer
 from PyQt6.QtGui import QImage, QPainter
-from PyQt6.QtWidgets import QApplication, QMenu, QWidget
+from PyQt6.QtWidgets import QApplication, QDialog, QMenu, QMessageBox, QWidget
 
 from animation import AnimationPlayer
+from contracts import Notification
 from history_service import HistoryService
 from history_store import DEFAULT_HISTORY_DB
+from idle_weights_dialog import IdleWeightsDialog
 from message_history import MessageHistoryDialog, local_time
 from notification_controller import NotificationController
-from pet_assets import AssetLoadError, LABELS, Pet
+from pet_assets import AssetLoadError, Pet
 from pet_commands import PetCommands
+from pet_settings import DEFAULT_SETTINGS_FILE, PetSettings
 from pet_ipc import PetIPCServer
 from speech_bubble import SpeechBubble
 
 ASSETS = Path(__file__).resolve().parent / "assets"
-MANIFEST = ASSETS / "whale-refined" / "pet.json"
+MANIFEST = ASSETS / "whalechan_sprites" / "pet.json"
+DEFAULT_SIZE = 240
+STARTUP_FRAMES = [7, 6, 5, 4, 3, 0]  # Source frames 8, 7, 6, 5, 4, 1 (one-based).
+STARTUP_BUBBLE_MS = 5000
 OVERLAY_FLAGS = (Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint
                  | Qt.WindowType.Tool | Qt.WindowType.WindowDoesNotAcceptFocus)
 
@@ -35,7 +41,7 @@ def mouse_only(widget):
 
 
 class DesktopPet(QWidget):
-    def __init__(self, pet, size, history, notifications, animation):
+    def __init__(self, pet, size, history, notifications, animation, settings):
         super().__init__()
         self.pet = pet
         self.display_size = size
@@ -44,9 +50,12 @@ class DesktopPet(QWidget):
         self.history = history
         self.notification_controller = notifications
         self.animation = animation
+        self.settings = settings
         self.ipc = None
         self.history_dialog = None
         self._closed = False
+        self._phase = "running"
+        self._finish_exit = False
         mouse_only(self)
         self.setAttribute(Qt.WidgetAttribute.WA_QuitOnClose, True)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
@@ -54,13 +63,87 @@ class DesktopPet(QWidget):
         self.setToolTip("左键拖动 · 点击互动 · 右键菜单 · 滚轮缩放")
         self.setWindowTitle(f"桌面宠物 · {pet.name}")
         self.bubble = SpeechBubble(self, mouse_only)
+        self.lifecycle_bubble = SpeechBubble(self, mouse_only)
+        self.lifecycle_bubble.dismissed.connect(self.hide_lifecycle_bubble)
+        self.lifecycle_timer = QTimer(self)
+        self.lifecycle_timer.setSingleShot(True)
+        self.lifecycle_timer.setTimerType(Qt.TimerType.PreciseTimer)
+        self.lifecycle_timer.timeout.connect(self.hide_lifecycle_bubble)
         self.bubble.dismissed.connect(notifications.dismiss)
         notifications.changed.connect(self.display_notification)
-        notifications.presented.connect(lambda notification: QApplication.beep() if notification.sound else None)
+        notifications.presented.connect(self.present_notification)
         animation.frame_changed.connect(self.update)
+        animation.track_started.connect(self.track_started)
+        animation.sequence_finished.connect(self.sequence_finished)
         self.resize_pet(size)
 
+    def start_startup(self):
+        if self._closed or self._phase != "running" or "goodbye" not in self.pet.tracks:
+            return
+        self._phase = "startup"
+        self.bubble.hide()
+        steps = [("goodbye", STARTUP_FRAMES)]
+        if "waving" in self.pet.tracks:
+            steps.append(("waving", None))
+        self.animation.play_sequence(steps, "startup")
+
+    def track_started(self, name):
+        if self._phase == "startup" and name == "waving":
+            self.lifecycle_bubble.close_button.show()
+            self.lifecycle_bubble.present(Notification("解码中～返回显空间", title=self.pet.name), 0)
+            self.lifecycle_bubble.footer.setText("5 秒后自动关闭")
+            self.lifecycle_timer.start(STARTUP_BUBBLE_MS)
+
+    def hide_lifecycle_bubble(self):
+        self.lifecycle_timer.stop()
+        self.lifecycle_bubble.hide()
+        if not self._closed and self._phase != "shutdown":
+            self.display_notification(self.notification_controller.current, len(self.notification_controller.queue))
+
+    def sequence_finished(self, mode):
+        if self._closed:
+            return
+        if mode == "startup" and self._phase == "startup":
+            self._phase = "running"
+            self.animation.resume_background()
+            self.display_notification(self.notification_controller.current, len(self.notification_controller.queue))
+        elif mode == "shutdown" and self._phase == "shutdown":
+            self._finish_exit = True
+            self.close()
+
+    def request_exit(self):
+        if self._closed or self._phase == "shutdown":
+            return
+        if not self.isVisible() or "goodbye" not in self.pet.tracks:
+            self.shutdown()
+            return
+        self._phase = "shutdown"
+        self.lifecycle_timer.stop()
+        self.bubble.hide()
+        self.lifecycle_bubble.hide()
+        self.animation.play_sequence([("goodbye", None)], "shutdown")
+        self.notification_controller.close()
+        if self.ipc:
+            self.ipc.close()
+        if self.history_dialog:
+            self.history_dialog.shutdown()
+        self.lifecycle_bubble.close_button.hide()
+        self.lifecycle_bubble.present(Notification("正在返回潜空间", title=self.pet.name), 0)
+        self.lifecycle_bubble.footer.setText("动画结束后退出")
+
+    def shutdown(self):
+        """Immediate resource cleanup for failed startup and noninteractive checks."""
+        self._finish_exit = True
+        self.close()
+
+    def present_notification(self, notification):
+        if notification.sound:
+            QApplication.beep()
+
     def display_notification(self, notification, queued):
+        self.animation.set_notification_active(notification is not None)
+        if self._closed or self._phase != "running" or self.lifecycle_bubble.isVisible():
+            return
         if notification is None:
             self.bubble.hide()
         elif self.bubble.isVisible() and self.bubble.notification_id == notification.id:
@@ -68,8 +151,37 @@ class DesktopPet(QWidget):
         else:
             self.bubble.present(notification, queued)
 
+    def set_idle_expression(self, name, checked, action):
+        selected = set(self.animation.idle_group)
+        if checked:
+            selected.add(name)
+        else:
+            selected.discard(name)
+        names = [track for track in self.pet.tracks if track in selected]
+        try:
+            self.settings.save_idle_group(self.pet, names)
+        except OSError as exc:
+            action.setChecked(name in self.animation.idle_group)
+            QMessageBox.warning(self, "无法保存设置", f"待机组设置未保存：{exc}")
+            return
+        self.animation.set_idle_group(names)
+
+    def edit_idle_weights(self):
+        dialog = IdleWeightsDialog(self.animation, self)
+        try:
+            if dialog.exec() != QDialog.DialogCode.Accepted:
+                return
+            try:
+                self.settings.save_idle_weights(self.pet, dialog.weights)
+            except OSError as exc:
+                QMessageBox.warning(self, "无法保存设置", f"待机权重未保存：{exc}")
+                return
+            self.animation.set_idle_weights(dialog.weights)
+        finally:
+            dialog.deleteLater()
+
     def show_history(self, selected_id=None):
-        if self._closed:
+        if self._closed or self._phase == "shutdown":
             return
         if self.history_dialog is None:
             self.history_dialog = MessageHistoryDialog(
@@ -83,15 +195,26 @@ class DesktopPet(QWidget):
         super().moveEvent(event)
         if hasattr(self, "bubble") and self.bubble.isVisible():
             self.bubble.reposition()
+        if hasattr(self, "lifecycle_bubble") and self.lifecycle_bubble.isVisible():
+            self.lifecycle_bubble.reposition()
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
         if hasattr(self, "bubble") and self.bubble.isVisible():
             self.bubble.reposition()
+        if hasattr(self, "lifecycle_bubble") and self.lifecycle_bubble.isVisible():
+            self.lifecycle_bubble.reposition()
 
     def closeEvent(self, event):
+        if not self._closed and not self._finish_exit and self.isVisible() and "goodbye" in self.pet.tracks:
+            event.ignore()
+            self.request_exit()
+            return
         if not self._closed:
             self._closed = True
+            self.lifecycle_timer.stop()
+            self.lifecycle_bubble.hide()
+            self.bubble.hide()
             self.animation.close()
             if self.ipc:
                 self.ipc.close()
@@ -137,8 +260,8 @@ class DesktopPet(QWidget):
 
     def mouseReleaseEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton and self.pressed is not None:
-            if not self.dragged:
-                choices = [n for n in ("shy", "happy", "waving", "jumping") if n in self.pet.tracks]
+            if not self.dragged and self._phase == "running":
+                choices = [n for n in ("shy", "happy", "waiting", "waving", "jumping") if n in self.pet.tracks]
                 if choices:
                     self.animation.play(random.choice(choices), once=True)
             self.pressed = None
@@ -150,15 +273,30 @@ class DesktopPet(QWidget):
     def create_context_menu(self):
         menu = QMenu(self)
         menu.addAction(self.pet.name).setEnabled(False)
+        if self._phase == "shutdown":
+            menu.addAction("正在返回潜空间").setEnabled(False)
+            return menu
         actions = menu.addMenu("动作 / 换装")
+        actions.setEnabled(self._phase == "running")
         for name in self.pet.tracks:
-            action = actions.addAction(LABELS.get(name, name))
+            action = actions.addAction(self.pet.labels.get(name, name))
             action.triggered.connect(lambda checked, n=name: self.animation.play(n))
+        settings = menu.addMenu("设置")
+        idle_group = settings.addMenu("待机组表情")
+        for name in self.pet.tracks:
+            action = idle_group.addAction(self.pet.labels.get(name, name))
+            action.setCheckable(True)
+            action.setChecked(name in self.animation.idle_group)
+            action.triggered.connect(lambda checked, n=name, a=action: self.set_idle_expression(n, checked, a))
+        idle_group.addSeparator()
+        weights = idle_group.addAction("出现概率权重…", self.edit_idle_weights)
+        weights.setEnabled(bool(self.animation.idle_group))
         scale = menu.addMenu("大小")
         for size in (160, 240, 320, 480):
             scale.addAction(f"{size} px", lambda s=size: self.resize_pet(s))
         pause = menu.addAction("暂停动画")
         pause.setCheckable(True)
+        pause.setEnabled(self._phase == "running")
         pause.setChecked(self.animation.paused)
         pause.triggered.connect(self.animation.toggle_pause)
         if self.notification_controller.current:
@@ -181,7 +319,7 @@ class DesktopPet(QWidget):
         history.addSeparator()
         history.addAction("查看 / 管理全部消息…", lambda: QTimer.singleShot(0, lambda: self.show_history()))
         menu.addSeparator()
-        menu.addAction("退出", self.close)
+        menu.addAction("退出", self.request_exit)
         return menu
 
     def contextMenuEvent(self, event):
@@ -192,16 +330,17 @@ class DesktopPet(QWidget):
             menu.deleteLater()
 
 
-def create_pet(manifest, size, history_db=DEFAULT_HISTORY_DB, server_name=None):
+def create_pet(manifest, size=DEFAULT_SIZE, history_db=DEFAULT_HISTORY_DB, server_name=None, settings_path=None):
     """Composition root: validate assets, assemble services and optionally start IPC."""
     pet = Pet(manifest)
+    settings = PetSettings(settings_path)
     history = HistoryService(history_db)
     window = None
     animation = None
     try:
         notifications = NotificationController(history)
-        animation = AnimationPlayer(pet)
-        window = DesktopPet(pet, size, history, notifications, animation)
+        animation = AnimationPlayer(pet, idle_group=settings.idle_group(pet), idle_weights=settings.idle_weights(pet))
+        window = DesktopPet(pet, size, history, notifications, animation, settings)
         history.setParent(window)
         notifications.setParent(window)
         animation.setParent(window)
@@ -210,7 +349,7 @@ def create_pet(manifest, size, history_db=DEFAULT_HISTORY_DB, server_name=None):
         return window
     except Exception:
         if window is not None:
-            window.close()
+            window.shutdown()
         else:
             if animation is not None:
                 animation.close()
@@ -238,13 +377,13 @@ def configure_platform():
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--size", type=int, default=320, help="窗口最长边像素数")
+    parser.add_argument("--size", type=int, default=DEFAULT_SIZE, help="窗口最长边像素数（默认 240）")
     parser.add_argument("--check", action="store_true", help="离屏验证动画帧及窗口，不打开桌面窗口")
     parser.add_argument("--socket", help="本机通知 IPC 名称，默认按项目路径和用户生成")
     parser.add_argument("--history-db", type=Path, default=DEFAULT_HISTORY_DB, help="消息历史 SQLite 文件路径")
     args = parser.parse_args()
     if not MANIFEST.is_file():
-        parser.error("缺少鲸鱼娘（精致版）素材，请运行 python scripts/fetch_assets.py")
+        parser.error("缺少 whalechan 重绘素材，请恢复 assets/whalechan_sprites/ 下的素材与 pet.json")
     if args.check:
         os.environ["QT_QPA_PLATFORM"] = "offscreen"
     configure_platform()
@@ -259,7 +398,7 @@ def main():
                 pixmap = pet.pixmap(name, i)
                 assert pixmap.hasAlphaChannel(), (name, i)
                 count += 1
-        print(f"OK whale-refined: {len(pet.tracks)} tracks, {count} transparent frames", flush=True)
+        print(f"OK {pet.name}: {len(pet.tracks)} tracks, {count} transparent frames", flush=True)
         window = create_pet(MANIFEST, args.size, history_db=":memory:")
         window.show()
         app.processEvents()
@@ -271,20 +410,21 @@ def main():
         assert result.pixelColor(0, 0).alpha() == 0
         assert any(result.pixelColor(x, y).alpha() > 0 for x in range(0, result.width(), 8)
                    for y in range(0, result.height(), 8))
-        window.close()
+        window.shutdown()
         print("OK frameless window and transparent rendering")
         return 0
     try:
-        window = create_pet(MANIFEST, args.size, history_db=args.history_db)
+        window = create_pet(MANIFEST, args.size, history_db=args.history_db, settings_path=DEFAULT_SETTINGS_FILE)
         start_notifications(window, args.socket)
     except (AssetLoadError, RuntimeError, sqlite3.Error, OSError) as exc:
         if "window" in locals():
-            window.close()
+            window.shutdown()
         parser.error(str(exc))
     area = app.primaryScreen().availableGeometry()
     if not QApplication.platformName().startswith("wayland"):
         window.move(area.bottomRight() - QPoint(window.width() + 40, window.height() + 30))
     window.show()
+    window.start_startup()
     return app.exec()
 
 

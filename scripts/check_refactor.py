@@ -188,7 +188,7 @@ def check_responsiveness(temporary, app):
         assert not pet.history_dialog.busy
     finally:
         heartbeat.stop()
-        pet.close()
+        pet.shutdown()
     print("PASS: DB lock leaves Qt heartbeat, animation commands and IPC status responsive; reservations release on failure and preserve FIFO")
 
     # Replays reserve capacity in arrival order, while generating fresh silent IDs.
@@ -239,7 +239,7 @@ def check_pending_shutdown(temporary, app):
                            for index in range(MAX_QUEUE)]
                 assert started.wait(2)
                 began = time.monotonic()
-                pet.close()
+                pet.shutdown()
                 assert time.monotonic() - began < 2.5
                 assert all(future.done() and future.exception() is not None for future in pending)
         app.processEvents()
@@ -250,13 +250,15 @@ def check_pending_shutdown(temporary, app):
             reader.execute("BEGIN IMMEDIATE")
             reader.rollback()
     finally:
-        pet.close()
+        pet.shutdown()
     print("PASS: shutdown cancels queued writes, settles futures, closes DB on its owner thread and preserves acknowledged history")
 
 
 def check_assets(temporary):
-    base = json.loads(MANIFEST.read_text())
-    base["sprite2d"]["spritesheetPath"] = str(MANIFEST.parent / "spritesheet.webp")
+    # Keep coverage of the original upstream layout as well as the new atlas.
+    upstream = ROOT / "assets" / "whale-refined" / "pet.json"
+    base = json.loads(upstream.read_text())
+    base["sprite2d"]["spritesheetPath"] = str(upstream.parent / "spritesheet.webp")
     invalid = []
     for label, edit in (
         ("empty durations", lambda data: data["sprite2d"]["tracks"]["idle"].update(durations=[])),
@@ -279,7 +281,7 @@ def check_assets(temporary):
             assert str(path) in str(exc)
 
     # frames2d validates the idle name and every image, including non-idle tracks.
-    first = Pet(MANIFEST)
+    first = Pet(upstream)
     folder = temporary / "idle"
     folder.mkdir()
     assert first.pixmap("idle", 0).save(str(folder / "0.png"))
@@ -299,13 +301,63 @@ def check_assets(temporary):
             raise AssertionError("Malformed frames2d must fail at load time")
         except AssetLoadError:
             pass
-    second = Pet(MANIFEST)
+    second = Pet(upstream)
     first.pixmap("idle", 0)
     assert first._cache and not second._cache
     second.pixmap("waving", 0)
     second._cache.clear()
     assert first._cache
+    redrawn = Pet(MANIFEST)
+    assert len(redrawn.tracks) == 12 and sum(len(t.frames) for t in redrawn.tracks.values()) == 77
+    assert redrawn.labels["notification"] == "新消息提醒"
+    assert not any(track.loop for track in redrawn.tracks.values())
+    bottoms = {}
+    for name, track in redrawn.tracks.items():
+        bottoms[name] = []
+        for index in range(len(track.frames)):
+            image = redrawn.pixmap(name, index).toImage()
+            assert (image.width(), image.height()) == (560, 560)
+            opaque_rows = [y for y in range(0, image.height(), 4)
+                           if any(image.pixelColor(x, y).alpha() >= 128
+                                  for x in range(0, image.width(), 4))]
+            assert opaque_rows and min(opaque_rows) > 4 and max(opaque_rows) < 552
+            bottoms[name].append(max(opaque_rows))
+    for name in redrawn.tracks.keys() - {"jumping", "goodbye"}:
+        assert max(bottoms[name]) - min(bottoms[name]) <= 4, (name, bottoms[name])
+    assert bottoms["jumping"][0] - bottoms["jumping"][3] >= 40
+    vortex = redrawn.pixmap("goodbye", 7).toImage()
+    vortex_top = min(y for y in range(0, 560, 4)
+                     if any(vortex.pixelColor(x, y).alpha() >= 128 for x in range(0, 560, 4)))
+    assert bottoms["goodbye"][7] - vortex_top < 200
+    # The pointing sequence must retain the yellow bulb in its final two frames.
+    for index in range(6):
+        image = redrawn.pixmap("notification", index).toImage()
+        yellow = 0
+        for y in range(0, 280, 4):
+            for x in range(0, 560, 4):
+                color = image.pixelColor(x, y)
+                yellow += color.alpha() >= 128 and color.red() > 180 and color.green() > 150 and color.blue() < 100
+        assert yellow > 30 if index >= 4 else yellow == 0, (index, yellow)
+    base = json.loads(MANIFEST.read_text())
+    base["sprite2d"]["spritesheetPath"] = str(MANIFEST.parent / "spritesheet.webp")
+    for edit in (lambda data: data["sprite2d"]["actions"].append("idle"),
+                 lambda data: data["sprite2d"]["actions"].__setitem__(0, ""),
+                 lambda data: data["sprite2d"].update(atlasRows=9),
+                 lambda data: data["sprite2d"].update(frames=[6]),
+                 lambda data: data.update(labels={"notification": 123}),
+                 lambda data: data.update(idleGroup=["missing"]),
+                 lambda data: data.update(idleGroup=["idle", "idle"]),
+                 lambda data: data.update(idleGroup="idle")):
+        data = json.loads(json.dumps(base))
+        edit(data)
+        path.write_text(json.dumps(data))
+        try:
+            Pet(path)
+            raise AssertionError("Malformed prepared atlas must fail at load time")
+        except AssetLoadError:
+            pass
     print("PASS: invalid tracks, durations, frame bounds and missing images fail during loading; caches belong to each instance")
+    print("PASS: 77 redrawn frames share a canvas and floor, the jump rises and the notification bulb survives slicing")
 
 
 if args.lock_child:

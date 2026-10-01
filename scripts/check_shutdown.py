@@ -48,12 +48,19 @@ def child():
     incomplete.flush()
     app.processEvents()
     callbacks = []
+    exit_frames = []
+    pet.animation.frame_changed.connect(lambda: exit_frames.append(pet.animation.frame)
+                                        if pet.animation.mode == "shutdown" else None)
 
     def click_exit():
         menu = app.activePopupWidget()
         assert menu is not None
         action = next(action for action in menu.actions() if action.text() == "退出")
         QTest.mouseClick(menu, Qt.MouseButton.LeftButton, pos=menu.actionGeometry(action).center())
+        assert pet.isVisible() and not pet._closed
+        assert pet.lifecycle_bubble.isVisible()
+        assert pet.lifecycle_bubble.body.toPlainText() == "正在返回潜空间"
+        assert pet.notification_controller.closed and not pet.ipc.server.isListening()
         callbacks.append("exit")
 
     def open_menu():
@@ -64,7 +71,9 @@ def child():
     QTimer.singleShot(50, open_menu)
     code = app.exec()
     assert code == 0 and callbacks == ["exit"]
+    assert exit_frames == list(range(8)), exit_frames
     assert not pet.isVisible() and not pet.bubble.isVisible()
+    assert not pet.lifecycle_bubble.isVisible()
     assert not pet.animation.timer.isActive()
     assert not pet.ipc.server.isListening()
     if pet.history_dialog:
@@ -76,7 +85,7 @@ def child():
         pass
     if os.name != "nt":
         assert not Path(socket_path).exists(), socket_path
-    print(f"PASS child {args.child}: menu Exit returned from app.exec and closed resources", flush=True)
+    print(f"PASS child {args.child}: menu Exit played all eight frames, returned from app.exec and closed resources", flush=True)
 
 
 def parent():

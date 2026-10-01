@@ -84,5 +84,5 @@ try:
     assert "input focus: False" in prop(pet, "WM_HINTS")
     print("PASS: explicitly opened history supports keyboard focus; Esc closes history and preserves the animated pet")
 finally:
-    pet.close()
+    pet.shutdown()
     normal.close()

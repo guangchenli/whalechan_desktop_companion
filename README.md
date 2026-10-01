@@ -1,6 +1,6 @@
-# PyQt 桌面宠物
+# 鲸鱼娘桌面宠物
 
-使用 dsh-web“鲸鱼娘（精致版）”素材的原生 PyQt6 桌宠：透明背景、无边框、请求置顶、拖动、点击互动、右键切换动作、滚轮缩放、暂停动画，以及 agent 的 MCP 通知气泡。运行时完全离线，不需要浏览器或原项目服务。
+使用 whalechan 重绘素材的原生 PyQt6 桌宠：透明背景、无边框、请求置顶、拖动、点击互动、右键切换动作、滚轮缩放、暂停动画，以及 agent 的 MCP 通知气泡与新消息提醒动画。运行时完全离线，不需要浏览器或原项目服务。
 
 ## 安装与运行
 
@@ -8,7 +8,7 @@
 
 - Python 3.10 或更新（PyQt6 与 mcp 均要求 `>=3.10`；开发与验证使用 CPython 3.12 / 3.14）
 - 图形桌面会话：Windows、macOS，或 Linux 的 X11 / XWayland（见「Linux 桌面」）
-- 素材已随仓库提交在 `assets/`（约 2.3 MB），运行本身不需要联网
+- 素材位于 `assets/`，默认加载 `assets/whalechan_sprites/pet.json`，运行本身不需要联网
 
 ```bash
 git clone <本仓库地址> && cd desktop_companion
@@ -21,10 +21,10 @@ python3 -m venv .venv          # 不用 uv 时
 uv pip install --python .venv/bin/python -r requirements.txt
 .venv/bin/python -m pip install -r requirements.txt   # 不用 uv 时
 
-# 3. 素材缺失或校验失败时重新拉取（按 Git blob SHA-1 校验，可重复执行）
-.venv/bin/python scripts/fetch_assets.py
+# 3. 确认 assets/whalechan_sprites/ 中的 pet.json 与 spritesheet.webp 完整
+# 原始 PNG 更新后可重新生成运行图集，见「素材来源与许可 / 复现与校验」
 
-# 4. 无桌面自检：9 条动画轨道、57 帧透明精灵、无边框窗口
+# 4. 无桌面自检：12 条动画轨道、77 帧透明精灵、无边框窗口
 .venv/bin/python pet.py --check
 
 # 5. 运行
@@ -55,14 +55,20 @@ find .venv -name libqxcb.so -path "*platforms*" -exec ldd {} \; | grep "not foun
 ### 运行参数
 
 ```bash
-.venv/bin/python pet.py                                  # 默认尺寸 320
-.venv/bin/python pet.py --size 240                       # 窗口最长边像素数
+.venv/bin/python pet.py                                  # 默认尺寸 240
+.venv/bin/python pet.py --size 320                       # 窗口最长边像素数
 .venv/bin/python pet.py --check                          # 离屏自检，不打开桌面窗口
 .venv/bin/python pet.py --socket 名称                     # 指定本机通知 IPC 名称（默认按项目路径和用户生成）
 .venv/bin/python pet.py --history-db /path/to/messages.sqlite3   # 指定历史数据库路径
 ```
 
-左键拖动，单击播放互动动作，右键打开原生菜单，滚轮调整大小，通过菜单的“退出”退出。选择某个动作后会按原始清单循环或回到待机。当前没有实现上游的养成数值、语音、自动 AI 对话和自动行走；agent 可以主动通过 MCP 发送通知。
+左键拖动，单击播放互动动作，右键打开原生菜单，滚轮调整大小，通过菜单的“退出”退出。所有动作均为 `loop: false`，手动选择动作播放一轮后回到待机组；有未关闭的消息气泡时，动作结束后继续消息提醒。当前没有实现上游的养成数值、语音、自动 AI 对话和自动行走；agent 可以主动通过 MCP 发送通知。
+
+启动时先播放漩涡素材的第 8、7、6、5、4、1 帧（按从左到右、从上到下的一基帧号），再招手一次。招手开始时弹出「解码中～返回显空间」，5 秒后自动消失。该提示使用独立气泡，不写入消息历史；启动期间收到的普通通知会保存，等启动提示消失后显示，继续遵循手动关闭规则。启动演出期间动作切换与暂停暂不可用，拖动和缩放仍可使用。
+
+待机组在空闲时按权重随机选取一个动作，播放完整一轮后再抽取，允许连续抽中同一个动作。默认包含待机、向左/右行走、招手、跳跃、开心、思考和扣扣脑袋，排除低落、困倦和新消息提醒。默认“待机”的出现概率为 90%，其余已选动作平分剩下的 10%；增减组成员会自动重新分配默认权重。只有一个成员时概率为 100%，取消“待机”后其余成员默认等概率。概率按每次动作选择计算，动画时长不会改变抽取权重。
+
+右键「设置 → 待机组表情」可勾选或取消任何动作，底部的「出现概率权重…」可调整各已选动作的相对权重，并实时查看归一化后的出现概率。权重为 0 的动作不会被抽中；「恢复默认」重新使用 90% / 10% 自动分配。组成员与自定义权重分别保存在项目 `data/settings.json` 的 `idleGroups`、`idleWeights` 字段，重启后继续使用，旧版只包含组成员的设置文件会自动使用默认权重。取消全部成员或全部权重设为 0 后显示静止的基础待机姿势。消息气泡全部关闭后恢复待机组；暂停动画仍可手动使用，新消息会恢复动画。专项检查：`.venv/bin/python scripts/check_animation.py`，使用临时设置与内存数据库。
 
 桌宠设置为不接受键盘焦点、显示时不激活。移除了 Esc 退出，不注册全局热键；鼠标悬停或离开时均不主动接管其他应用的键盘输入。主动打开右键菜单时，保留标准菜单的临时键盘抓取，Esc 只关闭菜单；菜单关闭后释放抓取。
 
@@ -74,11 +80,13 @@ find .venv -name libqxcb.so -path "*platforms*" -exec ldd {} \; | grep "not foun
 
 数据库及其 WAL / SHM 辅助文件属于运行数据，默认 `data/` 已加入 `.gitignore`。数据库使用 Python 内置的 `sqlite3`，无需安装额外依赖。历史与菜单检查：`.venv/bin/python scripts/check_history.py`，使用临时数据库，不写入实际消息历史。
 
-右键“退出”会关闭宠物、气泡与历史窗口，停止动画计时器，关闭本机 IPC 连接及 SQLite 数据库，并结束 Qt 事件循环。已经返回成功的通知均已提交到数据库；退出时取消尚未开始的存储任务，等待当前存储操作结束后关闭连接，未确认的请求不会在退出期间弹出气泡。主宠物窗口显式启用 `WA_QuitOnClose`，避免 Qt 默认将 `Tool` 窗口排除在最后窗口退出判断之外。Codex 启动的 stdio MCP 是由 MCP 客户端管理的独立进程，生命周期跟随客户端连接；桌宠退出后，相关工具会返回离线错误。
+右键“退出”或关闭主窗口时，显示「正在返回潜空间」，按顺序播放漩涡素材的全部 8 帧（约 3.55 秒），完成后关闭宠物、气泡与 SQLite 数据库，停止动画计时器并结束 Qt 事件循环。退出演出开始时就关闭历史窗口、停止接受通知并释放本机 IPC，暂停状态会自动恢复以完成退出；重复退出不会重启动画。已经返回成功的通知均已提交到数据库；最终清理时取消尚未开始的存储任务，等待当前存储操作结束后关闭连接，未确认的请求不会在退出期间弹出气泡。主宠物窗口显式启用 `WA_QuitOnClose`，避免 Qt 默认将 `Tool` 窗口排除在最后窗口退出判断之外。Codex 启动的 stdio MCP 是由 MCP 客户端管理的独立进程，生命周期跟随客户端连接；桌宠退出后，相关工具会返回离线错误。
 
 退出回归检查：`.venv/bin/python scripts/check_shutdown.py`；加 `--desktop` 可在真实桌面验证。检查会通过右键菜单点击“退出”，确认普通宠物、气泡显示中、历史窗口打开这三种情况的子进程正常结束并被回收，同时验证 IPC 文件与数据库锁已释放。
 
-`--check` 使用 Qt 离屏平台检查鲸鱼娘（精致版）的 9 条动画轨道、57 帧精灵、透明通道、动作 fallback，以及无边框窗口的透明绘制。离屏后端的 `does not support raise()` 提示是正常的。
+启动/退出专项检查：`.venv/bin/python scripts/check_lifecycle.py`，使用内存数据库与离屏窗口，验证默认大小、指定帧序、一次招手、5 秒提示、启动期间通知保留、退出帧序、暂停与重复关闭行为。
+
+`--check` 使用 Qt 离屏平台检查鲸鱼娘（重绘版）的 12 条动画轨道、77 帧精灵、透明通道、动作 fallback，以及无边框窗口的透明绘制。离屏后端的 `does not support raise()` 提示是正常的。
 
 ## MCP：把桌宠当作 terminal bell
 
@@ -121,7 +129,7 @@ MCP server 使用[官方 Python SDK](https://py.sdk.modelcontextprotocol.io/v1/)
 }
 ```
 
-`message` 必填，支持 1–2000 字符的纯文本、中文、换行与 emoji。`title` 默认 `Agent`，最多 60 字符且为单行。气泡一直显示到用户手动关闭；`duration_seconds` 仅为兼容旧调用保留，仍接受 3–120 秒，但不再控制自动关闭。默认安静显示；`sound: true` 同时请求系统提示音，是否有声音取决于桌面的 bell 设置。
+`message` 必填，支持 1–2000 字符的纯文本、中文、换行与 emoji。`title` 默认 `Agent`，最多 60 字符且为单行。有消息气泡未关闭时，持续播放 `notification`（新消息提醒）动画，每轮约 2.5 秒；这是消息状态驱动的重复播放，轨道本身仍为 `loop: false`。排队消息更新角标，关闭当前消息后显示下一条并继续提醒，最后一条关闭后恢复待机组。新消息会自动恢复暂停的动画。气泡一直显示到用户手动关闭；`duration_seconds` 仅为兼容旧调用保留，仍接受 3–120 秒，但不再控制自动关闭。默认安静显示；`sound: true` 同时请求系统提示音，是否有声音取决于桌面的 bell 设置。
 
 agent 也可以先调用 `desktop_pet_list_actions`，再调用 `desktop_pet_play_action` 播放某个动作。例如让宠物招手一次：
 
@@ -132,9 +140,9 @@ agent 也可以先调用 `desktop_pet_list_actions`，再调用 `desktop_pet_pla
 }
 ```
 
-当前鲸鱼娘支持 `idle`（待机）、`running-right`（向右跑）、`running-left`（向左跑）、`waving`（招手）、`jumping`（跳跃）、`failed`（失落）、`waiting`（等待）、`running`（忙碌）、`review`（思考）。使用查询工具返回的名称作为 `action`，不要传中文标签。
+当前鲸鱼娘支持 `idle`（待机）、`running-right`（向右行走）、`running-left`（向左行走）、`waving`（招手）、`jumping`（跳跃）、`failed`（低落）、`waiting`（开心）、`running`（困倦）、`review`（思考）、`notification`（新消息提醒）、`head-scratch`（扣扣脑袋）、`goodbye`（返回潜空间）。使用查询工具返回的名称作为 `action`，不要传中文标签。
 
-`once` 默认 `true`，播放完整一轮后回到待机。设为 `false` 时遵循素材原有的循环 / fallback 规则，例如 `running` 会循环，`jumping` 仍只播放一轮；使用 `{"action": "idle", "once": false}` 恢复待机。动作立即替换当前动画、不排队，播放指令会恢复暂停的动画；向左 / 向右跑只播放动画，不移动窗口。未知动作返回错误并保留当前动作和暂停状态。动作工具与气泡工具可独立使用。
+`once` 默认 `true`，保留该参数兼容原有调用；设为 `false` 也只播放一轮。动作结束后，有消息气泡则继续提醒，否则随机播放待机组。`{"action": "idle"}` 播放一轮基础待机动作。动作立即替换当前动画、不排队，播放指令会恢复暂停的动画；向左 / 向右行走只播放动画，不移动窗口。未知动作返回错误并保留当前动作和暂停状态。动作工具与气泡工具可独立使用。
 
 更新后重启桌宠并重新加载 MCP server，即可发现新增工具，原有连接配置可继续使用。
 
@@ -242,6 +250,8 @@ QT_QPA_PLATFORM=xcb .venv/bin/python pet.py
 | `history_store.py` / `history_service.py` | 独立 SQLite 仓库、专用存储线程及主线程结果交付 |
 | `notification_controller.py` | 持久化后确认、容量预留、FIFO 队列和静默历史重放 |
 | `pet_assets.py` / `animation.py` | 素材加载校验、实例帧缓存和动画播放状态 |
+| `pet_settings.py` | 待机组选择和出现权重的读取与原子保存 |
+| `idle_weights.py` / `idle_weights_dialog.py` | 待机组默认权重、数值校验及权重调整界面 |
 | `pet_commands.py` / `pet_ipc.py` | 应用命令分发、本机 socket 协议和实例锁 |
 | `message_history.py` / `speech_bubble.py` | 异步历史管理界面和通知气泡 |
 
@@ -249,7 +259,7 @@ SQLite 连接在存储线程中创建、使用和关闭；运行中的查询、�
 
 内部的 `HistoryService` 存储方法、`NotificationController.notify()` 和 `replay()` 返回 `concurrent.futures.Future`；结果回调在 Qt 主线程执行。界面使用完成回调，不能在 Qt 主线程上等待尚未完成的 `Future.result()`。启动前的数据库初始化和退出时的连接关闭会等待存储线程。MCP 工具名称、参数、返回 JSON 和 SQLite 表结构保持兼容，无需迁移现有历史数据库。
 
-素材加载时检查动作、idle / fallback、帧数、正整数时长、精灵图裁切范围及所有分帧图片。`sprite2d` 保留上游固定九行布局；帧缓存属于每个素材实例，最多保存 100 帧。
+素材加载时检查动作、idle / fallback、待机组、帧数、正整数时长、精灵图裁切范围及所有分帧图片。`sprite2d` 默认采用上游九行布局，也支持用 `actions` 指定行序；清单可用 `labels` 指定动作的中文名称、用 `idleGroup` 指定默认待机组。帧缓存属于每个素材实例，最多保存 100 帧。
 
 重构专项检查使用临时数据库、随机 IPC 名称与离屏窗口，验证并发启动、残留端点、数据库锁定时的界面响应、未完成写入的容量预留、FIFO、重放和无效素材：
 
@@ -263,20 +273,22 @@ SQLite 连接在存储线程中创建、使用和关闭；运行中的查询、�
 
 ### 来源
 
-本项目没有自绘美术，唯一的美术素材是 dsh-web 的「鲸鱼娘（精致版）」桌宠图集：
+当前默认素材为 `assets/whalechan_sprites/` 中的 12 张 whalechan 重绘动作 PNG，使用原「鲸鱼娘（精致版）」及重绘待机图作参考；原 10 组动作的生成说明保存在该目录的 `generation_prompts.md`。「扣扣脑袋」使用 `Whalechan’s puzzled head-scratch animation.png`，启动/退出演出使用 `Whalechan’s Goodbye into a Cosmic Vortex.png`。运行图集为统一 560×560 单元格、8 列 × 12 行的 `spritesheet.webp`，共 77 帧，按角色锚点对齐，并保留跳跃腾空和漩涡缩小过程。漩涡轨道默认属于启动/退出演出，待机组原有默认成员与 90% / 10% 权重保持不变。原始 PNG 保留不变。
+
+原 dsh-web「鲸鱼娘（精致版）」图集仍保存在 `assets/whale-refined/`，作为重绘参考和兼容性检查素材，其来源为：
 
 - 上游仓库：[zhu1090093659/dsh-web](https://github.com/zhu1090093659/dsh-web)（`packages/dsh-pet`，npm 包名 `@linxin666/dsh-pet`）
 - 上游目录：[packages/dsh-pet/assets/whale-refined](https://github.com/zhu1090093659/dsh-web/tree/bd6c2bb67d9f88e1190c6884982c03c88205aa39/packages/dsh-pet/assets/whale-refined)
 - 固定版本：`bd6c2bb67d9f88e1190c6884982c03c88205aa39`（下载、哈希校验和归因都锁定该 commit，不跟随 `main`）
 
-`assets/` 只保存这一种宠物的 `pet.json`、精灵图和预览，加上两份上游许可证，共约 2.3 MB。精灵图为 1536×1872 的 8 列 × 9 行图集（单元格 192×208，使用 alpha），行序沿用上游 `sprite2d` 契约：idle / running-right / running-left / waving / jumping / failed / waiting / running / review。
+原图为 1536×1872 的 8 列 × 9 行图集（单元格 192×208，使用 alpha），行序为 idle / running-right / running-left / waving / jumping / failed / waiting / running / review。重绘版保留这些 MCP 动作名称，并增加 `notification`；其中 `waiting` 对应开心，`running` 对应困倦。
 
 上游记录的衍生关系（摘自 `packages/dsh-pet/README.zh.md` 的内置宠物表与来源说明）：
 
 | 层级 | 内容 |
 |---|---|
 | 鲸鱼娘（原版）`whale` | dsh-web 仓库原有的鲸鱼娘图集，其 `pet.json` 标注 `license: BSD-3-Clause` |
-| 鲸鱼娘（精致版）`whale-refined` | **本项目所用素材**：以上述设计方向为基础，经 AI 辅助二次创作、修复与细节精修的衍生版本，`pet.json` 标注 `license: MIT` |
+| 鲸鱼娘（精致版）`whale-refined` | 本项目重绘素材的参考图：以上述设计方向为基础，经 AI 辅助二次创作、修复与细节精修的衍生版本，`pet.json` 标注 `license: MIT` |
 | 更早的灵感来源 | 上游说明精致版参考了 DreamSkin 的「DeepSeek-鲸鱼娘」主题（[dreamskin.cc](https://dreamskin.cc)，历史来源记录标注作者 `powerdog996`、主题 MIT，见 [dsh-web commit `87edd7f`](https://github.com/zhu1090093659/dsh-web/commit/87edd7ff4800dffd40bc93fb76e4ae450390facd)）。该记录只用于说明来源与衍生关系，精致版并非原作者的官方作品 |
 
 ### 许可声明现状（上游不一致，本项目按最严格口径处理）
@@ -297,6 +309,16 @@ SQLite 连接在存储线程中创建、使用和关闭；运行中的查询、�
 补充提醒：上游 `packages/dsh-pet/assets/` 下还有其它宠物，其中星夜人偶（Starry Doll）为 CC-BY-NC-SA-4.0、Miku 受 Piapro 角色许可约束。本项目未使用这些素材；若以后扩展宠物，需要逐个核对清单与 `THIRD_PARTY_NOTICES.md`，不能沿用本节的结论。
 
 ### 复现与校验
+
+重绘 PNG 更新后，可用准备脚本重新切帧、对齐并生成运行图集与清单。Pillow 仅用于美术准备，运行桌宠不需要它：
+
+```bash
+python3 -m pip install Pillow
+python3 scripts/prepare_whalechan_assets.py
+.venv/bin/python pet.py --check
+```
+
+以下下载脚本用于恢复原始参考素材，不会生成或覆盖重绘版：
 
 ```bash
 python3 scripts/fetch_assets.py

@@ -90,7 +90,7 @@ with TemporaryDirectory(prefix="desktop-pet-history-check-") as temporary:
         print("PASS: empty/recent menu entries, live list updates, full plain text and committed SQLite records")
         print("PASS: database write failure returns an error without changing the queue or stored history")
     finally:
-        pet.close()
+        pet.shutdown()
 
     # Recreate the pet against the same file: pending popups stay dismissed, history survives.
     pet = create_pet(MANIFEST, 160, history_db=db)
@@ -208,7 +208,7 @@ with TemporaryDirectory(prefix="desktop-pet-history-check-") as temporary:
         assert dialog.messages.item(0).checkState() == Qt.CheckState.Unchecked
         assert dialog.clear_all.isEnabled() and not dialog.delete_checked.isEnabled()
     finally:
-        pet.close()
+        pet.shutdown()
 
     pet = create_pet(MANIFEST, 160, history_db=db)
     try:
@@ -240,4 +240,4 @@ with TemporaryDirectory(prefix="desktop-pet-history-check-") as temporary:
         assert not dialog.check_all.isEnabled() and not dialog.clear_all.isEnabled()
         print("PASS: deleting all displayed rows loads the next page; deleting the final batch clears details and controls")
     finally:
-        pet.close()
+        pet.shutdown()

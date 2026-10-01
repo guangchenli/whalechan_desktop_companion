@@ -332,6 +332,8 @@ class MessageHistoryDialog(QDialog):
             "已加入通知队列" if result["status"] == "queued" else "已重新显示气泡"), "无法重新显示消息")
 
     def shutdown(self):
+        if self._shutdown:
+            return
         self._shutdown = True
         self.history.record_added.disconnect(self.record_added)
         self.close()

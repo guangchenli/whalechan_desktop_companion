@@ -1,0 +1,219 @@
+{
+  "petManifestVersion": 2,
+  "id": "whalechan-redrawn",
+  "displayName": "鲸鱼娘（重绘版）",
+  "description": "使用 whalechan 重绘动作图，包含独立的新消息提醒动画。",
+  "renderer": "sprite2d",
+  "labels": {
+    "idle": "待机",
+    "running-right": "向右行走",
+    "running-left": "向左行走",
+    "waving": "招手",
+    "jumping": "跳跃",
+    "failed": "低落",
+    "waiting": "开心",
+    "running": "困倦",
+    "review": "思考",
+    "notification": "新消息提醒",
+    "head-scratch": "扣扣脑袋",
+    "goodbye": "返回潜空间"
+  },
+  "idleGroup": [
+    "idle",
+    "running-right",
+    "running-left",
+    "waving",
+    "jumping",
+    "waiting",
+    "review",
+    "head-scratch"
+  ],
+  "sprite2d": {
+    "spritesheetPath": "spritesheet.webp",
+    "cell": {
+      "width": 560,
+      "height": 560
+    },
+    "columns": 8,
+    "atlasRows": 12,
+    "actions": [
+      "idle",
+      "running-right",
+      "running-left",
+      "waving",
+      "jumping",
+      "failed",
+      "waiting",
+      "running",
+      "review",
+      "notification",
+      "head-scratch",
+      "goodbye"
+    ],
+    "frames": [
+      6,
+      8,
+      8,
+      4,
+      5,
+      8,
+      6,
+      6,
+      6,
+      6,
+      6,
+      8
+    ],
+    "tracks": {
+      "idle": {
+        "durations": [
+          500,
+          500,
+          600,
+          500,
+          500,
+          600
+        ],
+        "loop": false,
+        "fallback": "idle"
+      },
+      "running-right": {
+        "durations": [
+          300,
+          300,
+          300,
+          300,
+          300,
+          300,
+          300,
+          400
+        ],
+        "loop": false,
+        "fallback": "idle"
+      },
+      "running-left": {
+        "durations": [
+          300,
+          300,
+          300,
+          300,
+          300,
+          300,
+          300,
+          400
+        ],
+        "loop": false,
+        "fallback": "idle"
+      },
+      "waving": {
+        "durations": [
+          450,
+          450,
+          450,
+          450
+        ],
+        "loop": false,
+        "fallback": "idle"
+      },
+      "jumping": {
+        "durations": [
+          400,
+          400,
+          400,
+          450,
+          450
+        ],
+        "loop": false,
+        "fallback": "idle"
+      },
+      "failed": {
+        "durations": [
+          550,
+          550,
+          550,
+          600,
+          650,
+          700,
+          550,
+          550
+        ],
+        "loop": false,
+        "fallback": "idle"
+      },
+      "waiting": {
+        "durations": [
+          550,
+          550,
+          600,
+          550,
+          550,
+          600
+        ],
+        "loop": false,
+        "fallback": "idle"
+      },
+      "running": {
+        "durations": [
+          330,
+          330,
+          330,
+          330,
+          330,
+          400
+        ],
+        "loop": false,
+        "fallback": "idle"
+      },
+      "review": {
+        "durations": [
+          650,
+          650,
+          650,
+          650,
+          650,
+          650
+        ],
+        "loop": false,
+        "fallback": "idle"
+      },
+      "notification": {
+        "durations": [
+          250,
+          250,
+          300,
+          350,
+          450,
+          900
+        ],
+        "loop": false,
+        "fallback": "idle"
+      },
+      "head-scratch": {
+        "durations": [
+          350,
+          350,
+          400,
+          450,
+          450,
+          500
+        ],
+        "loop": false,
+        "fallback": "idle"
+      },
+      "goodbye": {
+        "durations": [
+          400,
+          400,
+          450,
+          450,
+          450,
+          450,
+          450,
+          500
+        ],
+        "loop": false,
+        "fallback": "idle"
+      }
+    }
+  }
+}
