@@ -89,9 +89,7 @@ class DesktopPet(QWidget):
 
     def track_started(self, name):
         if self._phase == "startup" and name == "waving":
-            self.lifecycle_bubble.close_button.show()
-            self.lifecycle_bubble.present(Notification("解码中～返回显空间", title=self.pet.name), 0)
-            self.lifecycle_bubble.footer.setText("5 秒后自动关闭")
+            self.lifecycle_bubble.present(Notification("解码中～返回显空间"), 0, body_only=True)
             self.lifecycle_timer.start(STARTUP_BUBBLE_MS)
 
     def hide_lifecycle_bubble(self):
@@ -127,9 +125,7 @@ class DesktopPet(QWidget):
             self.ipc.close()
         if self.history_dialog:
             self.history_dialog.shutdown()
-        self.lifecycle_bubble.close_button.hide()
-        self.lifecycle_bubble.present(Notification("正在返回潜空间", title=self.pet.name), 0)
-        self.lifecycle_bubble.footer.setText("动画结束后退出")
+        self.lifecycle_bubble.present(Notification("正在返回潜空间"), 0, body_only=True)
 
     def shutdown(self):
         """Immediate resource cleanup for failed startup and noninteractive checks."""

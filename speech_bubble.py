@@ -67,18 +67,23 @@ class SpeechBubble(QWidget):
         self.footer.setStyleSheet("color: #a07e98; font-size: 10px;")
         self.layout_box.addWidget(self.footer)
 
-    def present(self, notification, queued):
+    def present(self, notification, queued, *, body_only=False):
         self.notification_id = notification.id
         screen = self.pet.screen() or QApplication.primaryScreen()
         area = screen.availableGeometry()
         self.setFixedWidth(min(360, max(180, area.width() - 20)))
-        self.title.setText("✦ " + notification.title)
+        self.title.setText("" if body_only else "✦ " + notification.title)
+        self.title.setVisible(not body_only)
+        self.close_button.setVisible(not body_only)
+        self.footer.setVisible(not body_only)
         # Plain text prevents agent messages from loading HTML or remote content.
         self.body.setPlainText(notification.message)
         self.body.document().setTextWidth(self.width() - 58)
         max_body = min(220, max(40, area.height() - 135))
         self.body.setFixedHeight(min(max_body, max(40, math.ceil(self.body.document().size().height()) + 6)))
         self.set_queue_count(queued)
+        if body_only:
+            self.queue_badge.hide()
         self.layout_box.setContentsMargins(22, 17, 22, 31)
         self.setFixedHeight(self.layout_box.sizeHint().height())
         self.reposition()
